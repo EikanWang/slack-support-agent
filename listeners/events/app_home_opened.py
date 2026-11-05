@@ -31,7 +31,6 @@ def handle_app_home_opened(
                 title="How can I help you today?",
                 prompts=SUGGESTED_PROMPTS,
             )
-            # TODO(agent-dm-messages-tab): handle app_context_changed once Bolt supports it
             return
 
         user_id = context.user_id

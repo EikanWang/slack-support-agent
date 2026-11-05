@@ -9,7 +9,6 @@ def test_build_issue_modal():
     assert modal["type"] == "modal"
     assert modal["callback_id"] == "issue_submission"
 
-    # The initial option should match the selected category
     category_block = modal["blocks"][0]
     initial = category_block["element"]["initial_option"]
     assert initial["value"] == "Password Reset"
@@ -19,7 +18,6 @@ def test_build_feedback_blocks():
     blocks = build_feedback_blocks()
 
     assert len(blocks) > 0
-    # The block should contain a feedback action
     block_dict = blocks[0].to_dict()
     action_ids = [e["action_id"] for e in block_dict["elements"]]
     assert "feedback" in action_ids
@@ -31,11 +29,9 @@ def test_build_app_home_view_default():
 
     assert view["type"] == "home"
 
-    # Find the actions block containing category buttons
     actions_block = next(b for b in view["blocks"] if b["type"] == "actions")
     assert len(actions_block["elements"]) == len(CATEGORIES)
 
-    # Shows MCP status as disconnected with learn-more link
     section_texts = [
         b["text"]["text"] for b in view["blocks"] if b["type"] == "section"
     ]

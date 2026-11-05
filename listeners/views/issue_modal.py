@@ -26,12 +26,9 @@ def handle_issue_submission(
         ]
         description = values["description_block"]["description_input"]["value"]
 
-        # Open a DM with the user
         dm = client.conversations_open(users=[user_id])
         channel_id = dm["channel"]["id"]
 
-        # Post the issue message with metadata so the message handler can
-        # identify it and run the agent on behalf of the original user
         user_message = f"*Category:* {category}\n*Description:* {description}"
         client.chat_postMessage(
             channel=channel_id,

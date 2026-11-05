@@ -25,7 +25,6 @@ def handle_app_mentioned(
         thread_ts = event.get("thread_ts") or event["ts"]
         user_id = context.user_id
 
-        # Strip the bot mention from the text
         cleaned_text = re.sub(r"<@[A-Z0-9]+>", "", text).strip()
 
         if not cleaned_text:
@@ -35,7 +34,6 @@ def handle_app_mentioned(
             )
             return
 
-        # Add eyes reaction only to the first message (not threaded replies)
         if not event.get("thread_ts"):
             client.reactions_add(
                 channel=channel_id,
@@ -43,7 +41,6 @@ def handle_app_mentioned(
                 name="eyes",
             )
 
-        # Set assistant thread status with loading messages
         set_status(
             status="Thinking...",
             loading_messages=[
@@ -55,10 +52,8 @@ def handle_app_mentioned(
             ],
         )
 
-        # Get conversation history
         history = conversation_store.get_history(channel_id, thread_ts)
 
-        # Run the agent
         deps = CaseyDeps(
             client=client,
             user_id=user_id,
@@ -68,13 +63,11 @@ def handle_app_mentioned(
         )
         result = run_agent(cleaned_text, deps, history)
 
-        # Stream response in thread with feedback buttons
         streamer = say_stream()
         streamer.append(markdown_text=result.final_output)
         feedback_blocks = build_feedback_blocks()
         streamer.stop(blocks=feedback_blocks)
 
-        # Store conversation history
         conversation_store.set_history(channel_id, thread_ts, result.to_input_list())
 
     except Exception as e:

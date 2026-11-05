@@ -1,6 +1,8 @@
 {
   "display_information": {
-    "name": "Dev Agent"
+    "name": "Casey",
+    "description": "AI IT support agent backed by OpenCode",
+    "background_color": "#1a1d21"
   },
   "features": {
     "app_home": {
@@ -9,10 +11,10 @@
       "messages_tab_read_only_enabled": false
     },
     "agent_view": {
-      "agent_description": "Hi, I am an agent built using Bolt for JavaScript. I am here to help you out!"
+      "agent_description": "Hi, I'm Casey, your IT support agent. Describe the problem and I'll help you troubleshoot it."
     },
     "bot_user": {
-      "display_name": "Dev Agent",
+      "display_name": "Casey",
       "always_online": true
     }
   },
@@ -37,27 +39,15 @@
       "user": [
         "channels:history",
         "channels:read",
-        "groups:history",
-        "groups:read",
         "im:history",
-        "mpim:history",
         "users:read",
         "search:read.public",
-        "search:read.private",
-        "search:read.mpim",
-        "search:read.im",
-        "search:read.files",
-        "search:read.users",
-        "chat:write",
-        "canvases:read",
-        "canvases:write",
-        "users:read.email"
+        "chat:write"
       ]
     }
   },
   "settings": {
     "socket_mode_enabled": true,
-    "org_deploy_enabled": true,
     "interactivity": {
       "is_enabled": true,
       "request_url": "https://ngrok-free.app/slack/events"

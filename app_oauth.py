@@ -16,12 +16,9 @@ from listeners import register_listeners
 
 load_dotenv(dotenv_path=".env", override=False)
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO").upper())
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# OAuth settings
-# ---------------------------------------------------------------------------
 
 _manifest = json.loads(Path("manifest.json").read_text())
 BOT_SCOPES = _manifest["oauth_config"]["scopes"]["bot"]
@@ -45,13 +42,6 @@ oauth_settings = OAuthSettings(
     state_store=state_store,
 )
 
-# ---------------------------------------------------------------------------
-# Bot-token fallback for pre-OAuth first-run experience
-# ---------------------------------------------------------------------------
-# When installed via Slack CLI, SLACK_BOT_TOKEN is available but Bolt clears
-# it when oauth_settings is present. This wrapper lets the bot token serve as
-# a fallback so App Home (with the OAuth install URL) and basic bot operations
-# work before anyone has completed the OAuth flow.
 
 _fallback_bot_token = os.environ.get("SLACK_BOT_TOKEN")
 
@@ -68,6 +58,12 @@ if _fallback_bot_token:
         actor_team_id=None,
         actor_user_id=None,
     ):
+        """Fall back to SLACK_BOT_TOKEN when no OAuth installation exists yet.
+
+        Bolt clears the static bot token once oauth_settings is present, so
+        without this the App Home (which shows the OAuth install URL) would be
+        unreachable until someone completes the OAuth flow.
+        """
         result = _original_authorize(
             context=context,
             enterprise_id=enterprise_id,
@@ -100,9 +96,6 @@ if _fallback_bot_token:
 
     oauth_settings.authorize = _authorize_with_fallback_bot_token
 
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
 
 app = App(
     signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
@@ -111,8 +104,6 @@ app = App(
         base_url=os.environ.get("SLACK_API_URL", "https://slack.com/api"),
         token=os.environ.get("SLACK_BOT_TOKEN"),
     ),
-    # Allow bot-posted messages (e.g. issue modal submissions with metadata)
-    # to reach the message handler instead of being silently dropped
     ignoring_self_events_enabled=False,
     oauth_settings=oauth_settings,
 )

@@ -4,11 +4,11 @@ This file provides guidance to coding agents when working with code in this repo
 
 ## What This Is
 
-**Casey**, an IT support agent for Slack built with Bolt for Python and the **OpenAI Agents SDK**. All tool data is hardcoded for demo purposes.
+**Casey**, an IT support agent for Slack built with Bolt for Python. Model calls go to a local **OpenCode server** (`agent/opencode_client.py`); the helpdesk persona has no tools. An optional **operator mode** (`agent/operator*.py`, `agent/approvals.py`) lets allowlisted Slack users drive OpenCode's shell/file tools on the host with Slack approval buttons. All deployment-specific values live in `.env` (see `.env.sample`); nothing in the repo may identify a workspace, machine, or credential.
 
 ## Slack Plugin
 
-To install the Slack plugin for your coding agent, follow [Claude Code, Codex, Cursor, and Other Coding Agents](./README.md#claude-code-codex-cursor-and-other-coding-agents) in the README.
+To give your coding agent Slack skills, install the [Slack MCP and Skills Plugin](https://docs.slack.dev/ai/slack-skills-plugin/) (for OpenCode: `npx skills add slackapi/slack-skills-plugin -y -a opencode`).
 
 ## Before you finish
 

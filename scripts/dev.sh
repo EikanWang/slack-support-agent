@@ -33,6 +33,7 @@ OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
 SLACK_BIN="${SLACK_BIN:-$HOME/.slack/bin/slack}"
 SLACK_APP_ID="${SLACK_APP_ID:-}"
+SLACK_RUN_FLAGS="${SLACK_RUN_FLAGS:-}"
 POLL_SECONDS="${CASEY_CREDS_POLL_SECONDS:-15}"
 
 LOOP_PID="$RUN_DIR/opencode-loop.pid"
@@ -139,8 +140,9 @@ cmd_up() {
   else
     (
       cd "$PROJECT_DIR"
-      setsid nohup "$SLACK_BIN" run --org-workspace-grant=all --app="$SLACK_APP_ID" \
-        --manifest-source=remote >>"$SLACK_LOG" 2>&1 </dev/null &
+      # shellcheck disable=SC2086
+      setsid nohup "$SLACK_BIN" run --app="$SLACK_APP_ID" --manifest-source=remote \
+        $SLACK_RUN_FLAGS >>"$SLACK_LOG" 2>&1 </dev/null &
       echo $! >"$SLACK_PID"
     )
     log "slack run started (pid $(cat "$SLACK_PID"))"
