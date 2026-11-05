@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from agent.opencode_client import PermissionRule
@@ -16,6 +16,15 @@ DEFAULT_DENIED_NAMES = (
     ".netrc",
 )
 
+DEFAULT_SYSTEM_DENIED = (
+    "/etc/shadow",
+    "/etc/gshadow",
+    "/etc/sudoers",
+    "/etc/sudoers.d",
+    "/etc/ssh",
+    "/root",
+)
+
 GATED_PERMISSIONS = ("bash", "edit", "write", "webfetch", "task")
 FILE_PERMISSIONS = ("read", "glob", "grep", "list", "edit", "write")
 
@@ -28,8 +37,8 @@ class OperatorPolicyError(ValueError):
 class OperatorPolicy:
     operator_user_ids: frozenset[str]
     root: Path
+    home: Path
     denied_paths: tuple[Path, ...]
-    extra_denied_globs: tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
     def from_env(cls, environ: dict | None = None) -> "OperatorPolicy":
@@ -45,6 +54,8 @@ class OperatorPolicy:
             raise OperatorPolicyError(
                 "CASEY_OPERATOR_ROOT must be set when CASEY_OPERATOR_USER_IDS is set"
             )
+        home_value = env.get("CASEY_OPERATOR_HOME", "").strip()
+        home = Path(home_value).expanduser().resolve() if home_value else Path.home()
 
         denied: list[Path] = []
         if root is not None:
@@ -52,13 +63,15 @@ class OperatorPolicy:
             names = (
                 [n.strip() for n in denied_names.split(",") if n.strip()]
                 if denied_names
-                else list(DEFAULT_DENIED_NAMES)
+                else [*DEFAULT_DENIED_NAMES, *DEFAULT_SYSTEM_DENIED]
             )
             for name in names:
                 candidate = Path(name).expanduser()
                 if not candidate.is_absolute():
-                    candidate = root / candidate
-                denied.append(candidate.resolve())
+                    candidate = home / candidate
+                candidate = candidate.resolve()
+                if cls._is_within(candidate, root):
+                    denied.append(candidate)
             credentials_file = env.get("CASEY_CREDENTIALS_FILE", "").strip()
             if credentials_file:
                 denied.append(Path(credentials_file).expanduser().resolve())
@@ -66,8 +79,15 @@ class OperatorPolicy:
         return cls(
             operator_user_ids=user_ids,
             root=root if root is not None else Path("/nonexistent"),
-            denied_paths=tuple(denied),
+            home=home,
+            denied_paths=tuple(dict.fromkeys(denied)),
         )
+
+    @property
+    def start_directory(self) -> Path:
+        if self._is_within(self.home, self.root) and self.home.is_dir():
+            return self.home
+        return self.root
 
     @property
     def enabled(self) -> bool:
@@ -77,7 +97,7 @@ class OperatorPolicy:
         return bool(user_id) and user_id in self.operator_user_ids
 
     def resolve_directory(self, requested: str, current: Path | None = None) -> Path:
-        base = current or self.root
+        base = current or self.start_directory
         expanded = Path(requested.strip()).expanduser()
         candidate = (expanded if expanded.is_absolute() else base / expanded).resolve()
 
@@ -93,10 +113,11 @@ class OperatorPolicy:
         return candidate
 
     def permission_rules(self, directory: Path) -> list[PermissionRule]:
-        root = str(self.root)
         rules = [
             PermissionRule("external_directory", "*", "deny"),
-            PermissionRule("external_directory", f"{root}/**", "allow"),
+            PermissionRule(
+                "external_directory", os.path.join(self.root, "**"), "allow"
+            ),
         ]
         for permission in GATED_PERMISSIONS:
             rules.append(PermissionRule(permission, "*", "ask"))
@@ -107,7 +128,8 @@ class OperatorPolicy:
             for pattern in self._file_tool_patterns(denied, directory):
                 for permission in FILE_PERMISSIONS:
                     rules.append(PermissionRule(permission, pattern, "deny"))
-            rules.append(PermissionRule("bash", f"*{denied.name}*", "deny"))
+            for pattern in self._bash_patterns(denied):
+                rules.append(PermissionRule("bash", pattern, "deny"))
         return rules
 
     def describe_denied(self) -> str:
@@ -116,6 +138,13 @@ class OperatorPolicy:
     @staticmethod
     def _is_within(path: Path, ancestor: Path) -> bool:
         return path == ancestor or ancestor in path.parents
+
+    def _bash_patterns(self, denied: Path) -> tuple[str, ...]:
+        if self._is_within(denied, self.home) and denied != self.home:
+            return (f"*{denied.name}*",)
+        if denied.is_dir():
+            return (f"*{denied}/*", f"*{denied}")
+        return (f"*{denied}*", f"*{denied.name}*")
 
     @staticmethod
     def _file_tool_patterns(denied: Path, directory: Path) -> tuple[str, ...]:

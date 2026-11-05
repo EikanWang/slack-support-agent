@@ -35,6 +35,19 @@ def policy(sandbox) -> OperatorPolicy:
         {
             "CASEY_OPERATOR_USER_IDS": "UOWNER, UALSO",
             "CASEY_OPERATOR_ROOT": str(sandbox["root"]),
+            "CASEY_OPERATOR_HOME": str(sandbox["root"]),
+            "CASEY_CREDENTIALS_FILE": str(sandbox["creds"]),
+        }
+    )
+
+
+@pytest.fixture
+def whole_fs_policy(sandbox) -> OperatorPolicy:
+    return OperatorPolicy.from_env(
+        {
+            "CASEY_OPERATOR_USER_IDS": "UOWNER",
+            "CASEY_OPERATOR_ROOT": "/",
+            "CASEY_OPERATOR_HOME": str(sandbox["root"]),
             "CASEY_CREDENTIALS_FILE": str(sandbox["creds"]),
         }
     )
@@ -82,6 +95,37 @@ class TestOperatorPolicy:
 
     def test_credentials_file_is_protected(self, policy, sandbox):
         assert sandbox["creds"].resolve() in policy.denied_paths
+
+    def test_denied_names_outside_root_are_dropped(self, policy):
+        assert all(
+            str(p).startswith(str(policy.root)) or p.name == "creds.sh"
+            for p in policy.denied_paths
+        )
+        assert not any(str(p).startswith("/etc") for p in policy.denied_paths)
+
+    def test_whole_filesystem_root(self, whole_fs_policy, sandbox):
+        policy = whole_fs_policy
+
+        assert policy.start_directory == sandbox["root"]
+        assert policy.resolve_directory("/tmp") == Path("/tmp").resolve()
+        assert policy.resolve_directory("..", sandbox["root"]) == sandbox["tmp"]
+        with pytest.raises(OperatorPolicyError, match="protected"):
+            policy.resolve_directory(".ssh", sandbox["root"])
+        with pytest.raises(OperatorPolicyError, match="protected"):
+            policy.resolve_directory("/root")
+        assert Path("/etc/ssh") in policy.denied_paths
+
+    def test_whole_filesystem_rules(self, whole_fs_policy, sandbox):
+        rules = {
+            (r.permission, r.pattern, r.action)
+            for r in whole_fs_policy.permission_rules(sandbox["root"])
+        }
+
+        assert ("external_directory", "/**", "allow") in rules
+        assert ("bash", "*.ssh*", "deny") in rules
+        assert ("bash", "*/etc/shadow*", "deny") in rules
+        assert ("bash", "*/etc/ssh/*", "deny") in rules
+        assert ("read", "/etc/shadow", "deny") in rules
 
     def test_permission_rules_gate_and_deny(self, policy, sandbox):
         directory = sandbox["root"] / "projects" / "app"
@@ -204,7 +248,9 @@ class TestRunOperator:
         with pytest.raises(TimeoutError):
             run_operator("sleep forever", self.deps, history=None)
 
-        self.fake_opencode.abort_session.assert_called_once_with("ses_op")
+        self.fake_opencode.abort_session.assert_called_once_with(
+            "ses_op", directory=str(policy.start_directory)
+        )
         self.fake_router.unregister.assert_called_once_with("ses_op")
 
 
@@ -286,14 +332,20 @@ class TestApprovalRouter:
         approvals._opencode = opencode
         slack = Mock(WebClient)
         slack.chat_postMessage.return_value = {"ts": "9.9"}
-        approvals.register("ses_op", slack, "C1", "1.0", "UOWNER")
+        approvals.register("ses_op", slack, "C1", "1.0", "UOWNER", directory="/w")
         approvals.handle_event(
-            {"type": "permission.asked", "properties": self._request()}
+            {
+                "type": "permission.asked",
+                "properties": self._request(),
+                "directory": "/w",
+            }
         )
 
         pending = approvals.reply("ses_op", "per_1", "reject", actor_user_id="UOWNER")
 
-        opencode.reply_permission.assert_called_once_with("ses_op", "per_1", "reject")
+        opencode.reply_permission.assert_called_once_with(
+            "ses_op", "per_1", "reject", directory="/w"
+        )
         assert pending.summary == "`bash` → `ls -la`"
         log = (tmp_path / "audit.log").read_text()
         assert '"event": "reply"' in log and '"response": "reject"' in log

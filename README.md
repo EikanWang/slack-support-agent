@@ -188,7 +188,7 @@ CASEY_OPERATOR_ROOT=/home/you
 ### What an operator can do
 
 - Ask for anything OpenCode can do with its tools: read and search files, run shell commands, edit files.
-- `cd <path>` and `pwd` are handled by Casey directly (no model call). `cd` is confined to `CASEY_OPERATOR_ROOT`; each `cd` starts a fresh OpenCode session rooted there.
+- `cd <path>` and `pwd` are handled by Casey directly (no model call). `cd` is confined to `CASEY_OPERATOR_ROOT` (which may be `/`); threads start in `CASEY_OPERATOR_HOME`, and each `cd` starts a fresh OpenCode session rooted there.
 - Every reply ends with a `Tools:` list of what ran, with a tick or a cross.
 
 ### Safety model
@@ -197,7 +197,7 @@ CASEY_OPERATOR_ROOT=/home/you
 |---|---|---|
 | Who | Python, before any model call | Only `CASEY_OPERATOR_USER_IDS` reach operator mode; only they can press Approve/Deny |
 | Where | Python (`cd`) + OpenCode `external_directory` rules | Nothing outside `CASEY_OPERATOR_ROOT` |
-| Protected paths | OpenCode permission rules, per tool | `.ssh`, `.aws`, `.config`, the credentials file, etc. are denied to `read`, `glob`, `grep`, `list`, `edit`, `write`, and to any `bash` command that mentions them. Overridable with `CASEY_OPERATOR_DENY`. |
+| Protected paths | OpenCode permission rules, per tool | `~/.ssh`, `~/.aws`, `~/.config`, the credentials file, `/etc/shadow`, `/etc/ssh`, `/root`, etc. are denied to `read`, `glob`, `grep`, `list`, `edit`, `write`, and to any `bash` command that mentions them. Overridable with `CASEY_OPERATOR_DENY`. |
 | Side effects | OpenCode `ask` + Slack buttons | `bash`, `edit`, `write`, `webfetch`, `task` pause until the operator clicks **Approve** or **Deny** in the thread. Reads run immediately. |
 | Audit | `logs/operator-audit.log` | JSON line for every request, decision, and rejected click |
 

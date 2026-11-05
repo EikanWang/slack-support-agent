@@ -26,6 +26,7 @@ class ThreadTarget:
     channel_id: str
     thread_ts: str
     user_id: str
+    directory: str | None = None
 
 
 @dataclass
@@ -34,6 +35,7 @@ class PendingApproval:
     permission_id: str
     target: ThreadTarget
     summary: str
+    directory: str | None = None
     message_ts: str | None = None
     asked_at: float = field(default_factory=time.time)
 
@@ -63,10 +65,11 @@ class ApprovalRouter:
         channel_id: str,
         thread_ts: str,
         user_id: str,
+        directory: str | None = None,
     ) -> None:
         with self._lock:
             self._targets[session_id] = ThreadTarget(
-                client, channel_id, thread_ts, user_id
+                client, channel_id, thread_ts, user_id, directory
             )
 
     def unregister(self, session_id: str) -> None:
@@ -79,9 +82,15 @@ class ApprovalRouter:
         with self._lock:
             pending = self._pending.pop(permission_id, None)
             opencode = self._opencode
+            target = self._targets.get(session_id)
         if opencode is None:
             raise RuntimeError("Approval router not started")
-        opencode.reply_permission(session_id, permission_id, response)
+        directory = (
+            pending.directory if pending else (target.directory if target else None)
+        )
+        opencode.reply_permission(
+            session_id, permission_id, response, directory=directory
+        )
         audit(
             "reply",
             session_id=session_id,
@@ -96,11 +105,11 @@ class ApprovalRouter:
         kind = event.get("type")
         properties = event.get("properties", {})
         if kind == "permission.asked":
-            self._on_asked(properties)
+            self._on_asked(properties, event.get("directory"))
         elif kind == "permission.replied":
             self._on_replied(properties)
 
-    def _on_asked(self, request: dict) -> None:
+    def _on_asked(self, request: dict, directory: str | None) -> None:
         session_id = request.get("sessionID", "")
         with self._lock:
             target = self._targets.get(session_id)
@@ -113,6 +122,7 @@ class ApprovalRouter:
             permission_id=request["id"],
             target=target,
             summary=summary,
+            directory=directory or target.directory,
         )
         audit(
             "asked",

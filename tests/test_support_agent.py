@@ -184,3 +184,42 @@ class TestRunCasey:
             "ses_existing", text="Still slow", system=CASEY_SYSTEM_PROMPT
         )
         assert result.session_id == "ses_existing"
+
+
+class TestGlobalEventStream:
+    def test_unwraps_envelope_and_attaches_directory(self, monkeypatch):
+        sse = (
+            b'data: {"payload": {"id": "evt_1", "type": "server.connected", "properties": {}}}\n\n'
+            b'data: {"directory": "/w", "project": "global", "payload": {"id": "evt_2", '
+            b'"type": "permission.asked", "properties": {"id": "per_1", "sessionID": "ses_1"}}}\n\n'
+            b'data: {"directory": "/w", "payload": {"type": "sync", "syncEvent": {}}}\n\n'
+            b"data: not json\n\n"
+        )
+        requested = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested.append(request.url.path)
+            return httpx.Response(
+                200, content=sse, headers={"content-type": "text/event-stream"}
+            )
+
+        real_client = httpx.Client
+
+        def fake_client(**kwargs):
+            return real_client(transport=httpx.MockTransport(handler), **kwargs)
+
+        monkeypatch.setattr(httpx, "Client", fake_client)
+        client = OpenCodeClient(
+            base_url="http://opencode.test", model=ModelRef("p", "m")
+        )
+
+        events = list(client.iter_events())
+
+        assert requested == ["/global/event"]
+        assert [e["type"] for e in events] == [
+            "server.connected",
+            "permission.asked",
+            "sync",
+        ]
+        assert events[1]["directory"] == "/w"
+        assert events[1]["properties"]["sessionID"] == "ses_1"

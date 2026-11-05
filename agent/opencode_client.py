@@ -110,29 +110,47 @@ class OpenCodeClient:
         return response.json()
 
     def reply_permission(
-        self, session_id: str, permission_id: str, response: str
+        self,
+        session_id: str,
+        permission_id: str,
+        response: str,
+        directory: str | None = None,
     ) -> None:
         self._post(
             f"/session/{session_id}/permissions/{permission_id}",
             json={"response": response},
+            params=_directory_params(directory),
         )
 
-    def abort_session(self, session_id: str) -> None:
-        self._post(f"/session/{session_id}/abort", json={})
+    def abort_session(self, session_id: str, directory: str | None = None) -> None:
+        self._post(
+            f"/session/{session_id}/abort",
+            json={},
+            params=_directory_params(directory),
+        )
 
     def iter_events(self) -> Iterator[dict]:
+        """Yield events for every project directory the server knows about.
+
+        Each item is the inner event (``type``/``properties``) with the owning
+        ``directory`` added, so callers can route per-session.
+        """
         with (
             httpx.Client(base_url=self._base_url, timeout=None) as stream_client,
-            stream_client.stream("GET", "/event") as response,
+            stream_client.stream("GET", "/global/event") as response,
         ):
             response.raise_for_status()
             for line in response.iter_lines():
                 if not line.startswith("data:"):
                     continue
                 try:
-                    yield json.loads(line[len("data:") :])
+                    envelope = json.loads(line[len("data:") :])
                 except json.JSONDecodeError:
                     continue
+                event = envelope.get("payload")
+                if not isinstance(event, dict) or "type" not in event:
+                    continue
+                yield {**event, "directory": envelope.get("directory")}
 
     def close(self) -> None:
         self._http.close()

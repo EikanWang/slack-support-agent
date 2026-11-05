@@ -88,7 +88,7 @@ def is_operator(user_id: str | None) -> bool:
 def run_operator(text: str, deps: CaseyDeps, history: list | None) -> OperatorResult:
     policy = get_policy()
     state = _state_from(history)
-    directory = Path(state.get("directory") or policy.root)
+    directory = Path(state.get("directory") or policy.start_directory)
     session_id = state.get("session_id")
 
     match = CD_PATTERN.match(text)
@@ -114,6 +114,7 @@ def run_operator(text: str, deps: CaseyDeps, history: list | None) -> OperatorRe
         channel_id=deps.channel_id,
         thread_ts=deps.thread_ts,
         user_id=deps.user_id,
+        directory=str(directory),
     )
     try:
         message = client.prompt_message(
@@ -128,7 +129,7 @@ def run_operator(text: str, deps: CaseyDeps, history: list | None) -> OperatorRe
             timeout=_turn_timeout(),
         )
     except Exception:
-        _abort_quietly(client, session_id)
+        _abort_quietly(client, session_id, str(directory))
         raise
     finally:
         approval_router.unregister(session_id)
@@ -140,7 +141,7 @@ def run_operator(text: str, deps: CaseyDeps, history: list | None) -> OperatorRe
 def _change_directory(
     policy: OperatorPolicy, requested: str | None, current: Path
 ) -> OperatorResult:
-    target = requested or str(policy.root)
+    target = requested or str(policy.start_directory)
     try:
         resolved = policy.resolve_directory(target, current)
     except OperatorPolicyError as error:
@@ -211,8 +212,8 @@ def _turn_timeout() -> float:
     )
 
 
-def _abort_quietly(client: OpenCodeClient, session_id: str) -> None:
+def _abort_quietly(client: OpenCodeClient, session_id: str, directory: str) -> None:
     try:
-        client.abort_session(session_id)
+        client.abort_session(session_id, directory=directory)
     except (httpx.HTTPError, OpenCodeUnavailable):
         logger.warning("Could not abort operator session %s", session_id)
