@@ -1,5 +1,7 @@
+import json
 import os
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 import httpx
@@ -25,6 +27,20 @@ class ModelRef:
         return cls(provider_id=provider_id, model_id=model_id)
 
 
+@dataclass(frozen=True)
+class PermissionRule:
+    permission: str
+    pattern: str
+    action: str
+
+    def to_payload(self) -> dict:
+        return {
+            "permission": self.permission,
+            "pattern": self.pattern,
+            "action": self.action,
+        }
+
+
 class OpenCodeClient:
     def __init__(
         self,
@@ -46,31 +62,95 @@ class OpenCodeClient:
     def model(self) -> ModelRef:
         return self._model
 
-    def create_session(self, title: str) -> str:
-        response = self._post("/session", json={"title": title})
+    def create_session(
+        self,
+        title: str,
+        directory: str | None = None,
+        permission: list[PermissionRule] | None = None,
+    ) -> str:
+        body: dict = {"title": title}
+        if permission is not None:
+            body["permission"] = [rule.to_payload() for rule in permission]
+        response = self._post(
+            "/session", json=body, params=_directory_params(directory)
+        )
         return response.json()["id"]
 
     def prompt(self, session_id: str, text: str, system: str) -> str:
-        body = {
+        message = self.prompt_message(
+            session_id, text=text, system=system, tools={"*": False}
+        )
+        return extract_text(message)
+
+    def prompt_message(
+        self,
+        session_id: str,
+        text: str,
+        system: str,
+        tools: dict[str, bool] | None = None,
+        directory: str | None = None,
+        timeout: float | None = None,
+    ) -> dict:
+        body: dict = {
             "model": {
                 "providerID": self._model.provider_id,
                 "modelID": self._model.model_id,
             },
             "system": system,
-            "tools": {"*": False},
             "parts": [{"type": "text", "text": text}],
         }
-        response = self._post(f"/session/{session_id}/message", json=body)
-        return _extract_text(response.json())
+        if tools is not None:
+            body["tools"] = tools
+        response = self._post(
+            f"/session/{session_id}/message",
+            json=body,
+            params=_directory_params(directory),
+            timeout=timeout,
+        )
+        return response.json()
+
+    def reply_permission(
+        self, session_id: str, permission_id: str, response: str
+    ) -> None:
+        self._post(
+            f"/session/{session_id}/permissions/{permission_id}",
+            json={"response": response},
+        )
+
+    def abort_session(self, session_id: str) -> None:
+        self._post(f"/session/{session_id}/abort", json={})
+
+    def iter_events(self) -> Iterator[dict]:
+        with (
+            httpx.Client(base_url=self._base_url, timeout=None) as stream_client,
+            stream_client.stream("GET", "/event") as response,
+        ):
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                try:
+                    yield json.loads(line[len("data:") :])
+                except json.JSONDecodeError:
+                    continue
 
     def close(self) -> None:
         self._http.close()
 
-    def _post(self, path: str, json: dict) -> httpx.Response:
+    def _post(
+        self,
+        path: str,
+        json: dict,
+        params: dict | None = None,
+        timeout: float | None = None,
+    ) -> httpx.Response:
         last_error: Exception | None = None
+        request_timeout = timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT
         for attempt in range(CONNECT_RETRIES):
             try:
-                response = self._http.post(path, json=json)
+                response = self._http.post(
+                    path, json=json, params=params, timeout=request_timeout
+                )
                 response.raise_for_status()
                 return response
             except httpx.ConnectError as error:
@@ -80,6 +160,10 @@ class OpenCodeClient:
             f"OpenCode server at {self._base_url} is not reachable "
             f"(is `scripts/dev.sh up` running?)"
         ) from last_error
+
+
+def _directory_params(directory: str | None) -> dict | None:
+    return {"directory": directory} if directory else None
 
 
 def _require_env(name: str) -> str:
@@ -112,17 +196,21 @@ CREDENTIAL_ERROR_MARKERS = (
 )
 
 
-def _extract_text(message: dict) -> str:
+def raise_for_message_error(message: dict) -> None:
     error = message.get("info", {}).get("error")
-    if error:
-        detail = error.get("data", {}).get("message") or error.get("name", "unknown")
-        if any(marker in detail.lower() for marker in CREDENTIAL_ERROR_MARKERS):
-            raise OpenCodeCredentialError(
-                "OpenCode's model credentials were rejected (likely the weekly "
-                f"token expired). Refresh the credentials file; detail: {detail}"
-            )
-        raise RuntimeError(f"OpenCode returned an error: {detail}")
+    if not error:
+        return
+    detail = error.get("data", {}).get("message") or error.get("name", "unknown")
+    if any(marker in detail.lower() for marker in CREDENTIAL_ERROR_MARKERS):
+        raise OpenCodeCredentialError(
+            "OpenCode's model credentials were rejected (likely the weekly "
+            f"token expired). Refresh the credentials file; detail: {detail}"
+        )
+    raise RuntimeError(f"OpenCode returned an error: {detail}")
 
+
+def extract_text(message: dict) -> str:
+    raise_for_message_error(message)
     chunks = [
         part["text"]
         for part in message.get("parts", [])

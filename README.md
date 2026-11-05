@@ -175,6 +175,36 @@ To rotate: edit the credentials file (or `scripts/dev.sh restart` to force a re-
 
 If a token has already expired, Casey replies with a `:warning:` message naming the credentials problem instead of a generic error.
 
+
+## Operator mode
+
+Operator mode turns a Slack thread into a remote coding/shell agent for the machine Casey runs on. It is **off by default** and, when on, is restricted to the Slack user IDs you list. Everyone else keeps talking to the helpdesk persona.
+
+```sh
+CASEY_OPERATOR_USER_IDS=U0XXXXXXXXX
+CASEY_OPERATOR_ROOT=/home/you
+```
+
+### What an operator can do
+
+- Ask for anything OpenCode can do with its tools: read and search files, run shell commands, edit files.
+- `cd <path>` and `pwd` are handled by Casey directly (no model call). `cd` is confined to `CASEY_OPERATOR_ROOT`; each `cd` starts a fresh OpenCode session rooted there.
+- Every reply ends with a `Tools:` list of what ran, with a tick or a cross.
+
+### Safety model
+
+| Layer | Enforced by | What it does |
+|---|---|---|
+| Who | Python, before any model call | Only `CASEY_OPERATOR_USER_IDS` reach operator mode; only they can press Approve/Deny |
+| Where | Python (`cd`) + OpenCode `external_directory` rules | Nothing outside `CASEY_OPERATOR_ROOT` |
+| Protected paths | OpenCode permission rules, per tool | `.ssh`, `.aws`, `.config`, the credentials file, etc. are denied to `read`, `glob`, `grep`, `list`, `edit`, `write`, and to any `bash` command that mentions them. Overridable with `CASEY_OPERATOR_DENY`. |
+| Side effects | OpenCode `ask` + Slack buttons | `bash`, `edit`, `write`, `webfetch`, `task` pause until the operator clicks **Approve** or **Deny** in the thread. Reads run immediately. |
+| Audit | `logs/operator-audit.log` | JSON line for every request, decision, and rejected click |
+
+A denied action stops the turn; Casey asks how to proceed rather than retrying. A turn that waits longer than `CASEY_OPERATOR_TURN_TIMEOUT` (default 30 min) is aborted.
+
+Things this does **not** protect against: an approved shell command can do anything your user can (the approval card shows the exact command, read it); the deny list is a glob match, so a protected file copied elsewhere is no longer protected; and the OpenCode server itself trusts anything on localhost, so keep `OPENCODE_BASE_URL` on `127.0.0.1`.
+
 ## Development
 
 ### Starting the app
@@ -367,11 +397,13 @@ Every incoming request is routed to a "listener". This directory groups each lis
 
 ### `/agent`
 
-The `support_agent.py` file defines the OpenAI Agents SDK Agent with a system prompt, personality, and tool configuration.
+`opencode_client.py` is a small HTTP client for the OpenCode server: sessions, prompts, permission replies, and the server-sent event stream.
 
-The `deps.py` file defines the `CaseyDeps` dataclass passed to the agent at runtime, providing access to the Slack client and conversation context.
+`support_agent.py` is the helpdesk persona (system prompt, one OpenCode session per thread, tools disabled).
 
-The `tools` directory contains five IT support tools that the agent can call during a conversation.
+`operator_policy.py`, `operator.py`, and `approvals.py` implement operator mode: the allowlist and directory sandbox, the OpenCode permission ruleset, `cd`/`pwd`, and the Slack approval cards wired to OpenCode's permission events.
+
+`router.py` picks a mode per message based on the Slack user. `deps.py` carries the Slack client and thread context into either agent.
 
 ### `/thread_context`
 

@@ -17,7 +17,7 @@ from agent.opencode_client import (
     OpenCodeClient,
     OpenCodeCredentialError,
     OpenCodeUnavailable,
-    _extract_text,
+    extract_text,
 )
 
 
@@ -45,7 +45,7 @@ class TestExtractText:
             ],
         }
 
-        assert _extract_text(message) == "Hello\nworld"
+        assert extract_text(message) == "Hello\nworld"
 
     def test_raises_when_server_reports_error(self):
         message = {
@@ -54,7 +54,7 @@ class TestExtractText:
         }
 
         with pytest.raises(RuntimeError, match="boom"):
-            _extract_text(message)
+            extract_text(message)
 
     def test_flags_expired_credentials_distinctly(self):
         message = {
@@ -68,7 +68,7 @@ class TestExtractText:
         }
 
         with pytest.raises(OpenCodeCredentialError, match="token expired"):
-            _extract_text(message)
+            extract_text(message)
 
 
 class TestConnectRetry:
