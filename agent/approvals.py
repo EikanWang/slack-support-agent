@@ -15,7 +15,18 @@ from agent.opencode_client import OpenCodeClient
 logger = logging.getLogger(__name__)
 
 APPROVE_ACTION_ID = "operator_approve"
+APPROVE_ALWAYS_ACTION_ID = "operator_approve_always"
 DENY_ACTION_ID = "operator_deny"
+RESPONSE_BY_ACTION = {
+    APPROVE_ACTION_ID: "once",
+    APPROVE_ALWAYS_ACTION_ID: "always",
+    DENY_ACTION_ID: "reject",
+}
+VERDICT_BY_RESPONSE = {
+    "once": "Approved",
+    "always": "Approved for this session",
+    "reject": "Denied",
+}
 RECONNECT_DELAY_SECONDS = 3.0
 DEFAULT_AUDIT_LOG = "logs/operator-audit.log"
 
@@ -37,6 +48,7 @@ class PendingApproval:
     summary: str
     directory: str | None = None
     message_ts: str | None = None
+    always_patterns: list[str] = field(default_factory=list)
     asked_at: float = field(default_factory=time.time)
 
 
@@ -117,12 +129,14 @@ class ApprovalRouter:
             return
 
         summary = summarise_request(request)
+        always_patterns = list(request.get("always") or [])
         pending = PendingApproval(
             session_id=session_id,
             permission_id=request["id"],
             target=target,
             summary=summary,
             directory=directory or target.directory,
+            always_patterns=always_patterns,
         )
         audit(
             "asked",
@@ -142,6 +156,7 @@ class ApprovalRouter:
                     summary,
                     session_id,
                     request["id"],
+                    always_patterns=always_patterns,
                 ),
             )
             pending.message_ts = posted["ts"]
@@ -155,9 +170,7 @@ class ApprovalRouter:
             pending = self._pending.pop(properties.get("requestID", ""), None)
         if pending is None or pending.message_ts is None:
             return
-        verdict = (
-            "Approved" if properties.get("reply") in ("once", "always") else "Denied"
-        )
+        verdict = VERDICT_BY_RESPONSE.get(properties.get("reply"), "Denied")
         try:
             pending.target.client.chat_update(
                 channel=pending.target.channel_id,
@@ -201,41 +214,54 @@ def summarise_request(request: dict) -> str:
 
 
 def build_approval_blocks(
-    permission: str, summary: str, session_id: str, permission_id: str
+    permission: str,
+    summary: str,
+    session_id: str,
+    permission_id: str,
+    always_patterns: list[str] | None = None,
 ) -> list:
     value = json.dumps({"session_id": session_id, "permission_id": permission_id})
+    text = f":lock: *Approval needed* ({permission})\n{summary}"
+    if always_patterns:
+        remembered = ", ".join(f"`{p}`" for p in always_patterns[:3])
+        if len(always_patterns) > 3:
+            remembered += f" (+{len(always_patterns) - 3})"
+        text += f"\n_Always_ also allows {remembered} for the rest of this thread."
+    elements = [
+        {
+            "type": "button",
+            "action_id": APPROVE_ACTION_ID,
+            "style": "primary",
+            "text": {"type": "plain_text", "text": "Approve"},
+            "value": value,
+        },
+    ]
+    if always_patterns:
+        elements.append(
+            {
+                "type": "button",
+                "action_id": APPROVE_ALWAYS_ACTION_ID,
+                "text": {"type": "plain_text", "text": "Always"},
+                "value": value,
+            }
+        )
+    elements.append(
+        {
+            "type": "button",
+            "action_id": DENY_ACTION_ID,
+            "style": "danger",
+            "text": {"type": "plain_text", "text": "Deny"},
+            "value": value,
+        }
+    )
     return [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f":lock: *Approval needed* ({permission})\n{summary}",
-            },
-        },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "action_id": APPROVE_ACTION_ID,
-                    "style": "primary",
-                    "text": {"type": "plain_text", "text": "Approve"},
-                    "value": value,
-                },
-                {
-                    "type": "button",
-                    "action_id": DENY_ACTION_ID,
-                    "style": "danger",
-                    "text": {"type": "plain_text", "text": "Deny"},
-                    "value": value,
-                },
-            ],
-        },
+        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+        {"type": "actions", "elements": elements},
     ]
 
 
 def build_resolved_blocks(verdict: str, summary: str, actor: str | None = None) -> list:
-    emoji = ":white_check_mark:" if verdict == "Approved" else ":no_entry:"
+    emoji = ":no_entry:" if verdict == "Denied" else ":white_check_mark:"
     by = f" by <@{actor}>" if actor else ""
     return [
         {

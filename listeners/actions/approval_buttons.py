@@ -5,7 +5,8 @@ from slack_bolt import Ack, BoltContext
 from slack_sdk import WebClient
 
 from agent.approvals import (
-    APPROVE_ACTION_ID,
+    RESPONSE_BY_ACTION,
+    VERDICT_BY_RESPONSE,
     approval_router,
     audit,
     build_resolved_blocks,
@@ -42,8 +43,8 @@ def handle_approval_button(
         )
         return
 
-    response = "once" if action["action_id"] == APPROVE_ACTION_ID else "reject"
-    verdict = "Approved" if response == "once" else "Denied"
+    response = RESPONSE_BY_ACTION[action["action_id"]]
+    verdict = VERDICT_BY_RESPONSE[response]
     try:
         pending = approval_router.reply(session_id, permission_id, response, user_id)
         summary = pending.summary if pending else "request"

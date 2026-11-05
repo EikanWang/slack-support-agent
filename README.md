@@ -137,8 +137,10 @@ CASEY_OPERATOR_ROOT=/home/you          # or / for the whole filesystem
 | Who | Python, before any model call | Only `CASEY_OPERATOR_USER_IDS` reach operator mode; only they can press Approve/Deny |
 | Where | Python (`cd`) + OpenCode `external_directory` rules | Nothing outside `CASEY_OPERATOR_ROOT` |
 | Protected paths | OpenCode permission rules, per tool | By default `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config`, `~/.slack`, `~/.opencode`, `~/.env`, `~/.git-credentials`, `~/.netrc`, `/etc/shadow`, `/etc/gshadow`, `/etc/sudoers*`, `/etc/ssh`, `/root`, and the credentials file are denied to `read`, `glob`, `grep`, `list`, `edit`, `write`, and to any `bash` command that mentions them. Override with `CASEY_OPERATOR_DENY`. |
-| Side effects | OpenCode `ask` + Slack buttons | `bash`, `edit`, `write`, `webfetch`, `task` pause until the operator clicks **Approve** or **Deny** in the thread. Reads run immediately. |
+| Side effects | OpenCode `ask` + Slack buttons | `bash`, `edit`, `write`, `webfetch`, `task` pause until the operator clicks **Approve**, **Always**, or **Deny** in the thread. Reads run immediately. |
 | Audit | `logs/operator-audit.log` | JSON line for every request, decision, and rejected click |
+
+**Approve** allows the single request. **Always** allows it and remembers the pattern OpenCode suggests (shown on the card, e.g. `git status*` or a file path) for the rest of that thread's session, so repetitive commands stop prompting; the memory is dropped when the thread's session ends or you `cd`. **Deny** stops the turn.
 
 A denied action stops the turn; Casey asks how to proceed rather than retrying. A turn that waits longer than `CASEY_OPERATOR_TURN_TIMEOUT` (default 30 min) is aborted.
 
@@ -215,7 +217,7 @@ This mode uses an HTTP server instead of Socket Mode, which is required for OAut
 
 **Assistant panel** — Click _Add Agent_ in the top-right corner of Slack, select Casey, then pick a suggested prompt or type a message.
 
-**Operator** (allowlisted users only) — DM Casey with `pwd`, `cd some/dir`, or any request such as "show me the failing test and fix it". Approve or deny each side-effecting action from the buttons in the thread.
+**Operator** (allowlisted users only) — DM Casey with `pwd`, `cd some/dir`, or any request such as "show me the failing test and fix it". Approve, Always-approve, or deny each side-effecting action from the buttons in the thread.
 
 ## Development
 

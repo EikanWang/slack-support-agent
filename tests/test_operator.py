@@ -7,6 +7,8 @@ from slack_sdk import WebClient
 from agent import operator, router
 from agent.approvals import (
     APPROVE_ACTION_ID,
+    APPROVE_ALWAYS_ACTION_ID,
+    DENY_ACTION_ID,
     ApprovalRouter,
     build_approval_blocks,
     summarise_request,
@@ -319,11 +321,30 @@ class TestApprovalRouter:
         kwargs = slack.chat_postMessage.call_args.kwargs
         assert kwargs["channel"] == "C1" and kwargs["thread_ts"] == "1.0"
         actions = next(b for b in kwargs["blocks"] if b["type"] == "actions")
-        assert {e["action_id"] for e in actions["elements"]} == {
+        assert [e["action_id"] for e in actions["elements"]] == [
             APPROVE_ACTION_ID,
-            "operator_deny",
-        }
+            APPROVE_ALWAYS_ACTION_ID,
+            DENY_ACTION_ID,
+        ]
         assert (tmp_path / "audit.log").read_text().count('"event": "asked"') == 1
+
+    def test_omits_always_button_when_nothing_can_be_remembered(self, monkeypatch):
+        monkeypatch.setenv("CASEY_AUDIT_LOG", "/dev/null")
+        approvals = ApprovalRouter()
+        slack = Mock(WebClient)
+        slack.chat_postMessage.return_value = {"ts": "9.9"}
+        approvals.register("ses_op", slack, "C1", "1.0", "UOWNER")
+
+        approvals.handle_event(
+            {"type": "permission.asked", "properties": self._request(always=[])}
+        )
+
+        kwargs = slack.chat_postMessage.call_args.kwargs
+        actions = next(b for b in kwargs["blocks"] if b["type"] == "actions")
+        assert [e["action_id"] for e in actions["elements"]] == [
+            APPROVE_ACTION_ID,
+            DENY_ACTION_ID,
+        ]
 
     def test_reply_relays_to_opencode_and_audits(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CASEY_AUDIT_LOG", str(tmp_path / "audit.log"))
@@ -375,9 +396,60 @@ class TestApprovalRouter:
         assert kwargs["ts"] == "9.9"
         assert "Approved" in kwargs["text"]
 
+    def test_always_reply_is_relayed_and_audited(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CASEY_AUDIT_LOG", str(tmp_path / "audit.log"))
+        approvals = ApprovalRouter()
+        opencode = Mock(OpenCodeClient)
+        approvals._opencode = opencode
+        slack = Mock(WebClient)
+        slack.chat_postMessage.return_value = {"ts": "9.9"}
+        approvals.register("ses_op", slack, "C1", "1.0", "UOWNER")
+        approvals.handle_event(
+            {"type": "permission.asked", "properties": self._request()}
+        )
+
+        pending = approvals.reply("ses_op", "per_1", "always", actor_user_id="UOWNER")
+
+        opencode.reply_permission.assert_called_once_with(
+            "ses_op", "per_1", "always", directory=None
+        )
+        assert pending.always_patterns == ["ls *"]
+        assert '"response": "always"' in (tmp_path / "audit.log").read_text()
+
+    def test_always_reply_from_elsewhere_is_labelled(self, monkeypatch):
+        monkeypatch.setenv("CASEY_AUDIT_LOG", "/dev/null")
+        approvals = ApprovalRouter()
+        slack = Mock(WebClient)
+        slack.chat_postMessage.return_value = {"ts": "9.9"}
+        approvals.register("ses_op", slack, "C1", "1.0", "UOWNER")
+        approvals.handle_event(
+            {"type": "permission.asked", "properties": self._request()}
+        )
+
+        approvals.handle_event(
+            {
+                "type": "permission.replied",
+                "properties": {"requestID": "per_1", "reply": "always"},
+            }
+        )
+
+        assert "Approved for this session" in slack.chat_update.call_args.kwargs["text"]
+
     def test_approval_blocks_carry_ids(self):
         blocks = build_approval_blocks("bash", "`bash` → `ls`", "ses_op", "per_1")
 
         button = blocks[1]["elements"][0]
         assert '"session_id": "ses_op"' in button["value"]
         assert '"permission_id": "per_1"' in button["value"]
+
+    def test_approval_blocks_explain_what_always_remembers(self):
+        blocks = build_approval_blocks(
+            "bash", "`bash` → `ls`", "ses_op", "per_1", always_patterns=["ls *"]
+        )
+
+        assert "_Always_ also allows `ls *`" in blocks[0]["text"]["text"]
+        assert [e["action_id"] for e in blocks[1]["elements"]] == [
+            APPROVE_ACTION_ID,
+            APPROVE_ALWAYS_ACTION_ID,
+            DENY_ACTION_ID,
+        ]
