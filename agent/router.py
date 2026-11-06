@@ -1,5 +1,6 @@
 from agent.deps import CaseyDeps
 from agent.models import (
+    ModelCommand,
     ModelCommandError,
     handle_model_command,
     parse_model_command,
@@ -22,16 +23,13 @@ def run_agent(text: str, deps: CaseyDeps, history: list | None):
     state = history[0] if history else {}
     model = model_from(state)
 
-    argument = parse_model_command(text)
-    if argument is not False:
-        return _run_model_command(argument, state, model)
+    command = parse_model_command(text)
+    if command is not None:
+        return _run_model_command(command, state, model)
 
-    result = (
-        run_operator(text, deps, history, model=model)
-        if is_operator(deps.user_id)
-        else run_casey(text, deps, history, model=model)
-    )
-    return result
+    if is_operator(deps.user_id):
+        return run_operator(text, deps, history, model=model)
+    return run_casey(text, deps, history, model=model)
 
 
 def model_from(state: dict) -> ModelRef | None:
@@ -40,10 +38,12 @@ def model_from(state: dict) -> ModelRef | None:
 
 
 def _run_model_command(
-    argument: str | None, state: dict, model: ModelRef | None
+    command: ModelCommand, state: dict, model: ModelRef | None
 ) -> ModelCommandResult:
     try:
-        reply, chosen, changed = handle_model_command(argument, get_client(), model)
+        reply, chosen, changed = handle_model_command(
+            command.argument, get_client(), model
+        )
     except ModelCommandError as error:
         return ModelCommandResult(f":no_entry: {error}", state)
 

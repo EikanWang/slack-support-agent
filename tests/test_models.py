@@ -1,3 +1,4 @@
+import time
 from unittest.mock import Mock
 
 import pytest
@@ -6,6 +7,7 @@ from agent import models, router
 from agent.deps import CaseyDeps
 from agent.models import (
     ModelCatalogue,
+    ModelCommand,
     ModelCommandError,
     handle_model_command,
     parse_model_command,
@@ -50,13 +52,13 @@ class TestParsing:
         ],
     )
     def test_recognises_model_commands(self, text, expected):
-        assert parse_model_command(text) == expected
+        assert parse_model_command(text) == ModelCommand(argument=expected)
 
     @pytest.mark.parametrize(
         "text", ["modelling clay", "what model are you", "remodel the kitchen", "hi"]
     )
     def test_ignores_other_text(self, text):
-        assert parse_model_command(text) is False
+        assert parse_model_command(text) is None
 
 
 class TestSearchAndResolve:
@@ -115,6 +117,14 @@ class TestCommand:
 
         assert changed is False and "Already using" in reply
 
+    def test_switching_to_the_default_clears_the_override(self, client):
+        reply, model, changed = handle_model_command(
+            "anthropic/claude-sonnet-4-5", client, ModelRef("openai", "gpt-5")
+        )
+
+        assert model is None and changed is True
+        assert "Back to the default model" in reply
+
     def test_reset_clears_override(self, client):
         reply, model, changed = handle_model_command(
             "reset", client, ModelRef("openai", "gpt-5")
@@ -154,6 +164,27 @@ class TestCommand:
         handle_model_command("list", client, None)
 
         client.available_models.assert_called_once()
+
+    def test_catalogue_fetches_once_under_concurrency(self, client):
+        import threading
+
+        def slow_fetch():
+            time.sleep(0.05)
+            return list(CATALOGUE)
+
+        client.available_models.side_effect = slow_fetch
+        cache = ModelCatalogue()
+        threads = [
+            threading.Thread(target=cache.models, args=(client,)) for _ in range(5)
+        ]
+
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+
+        assert not any(thread.is_alive() for thread in threads)
+        assert client.available_models.call_count == 1
 
     def test_unreachable_server_raises_command_error(self, client):
         client.available_models.side_effect = OSError("boom")

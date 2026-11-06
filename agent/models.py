@@ -1,6 +1,8 @@
 import logging
 import re
+import threading
 import time
+from dataclasses import dataclass
 
 from agent.opencode_client import ModelRef, OpenCodeClient
 
@@ -19,32 +21,42 @@ class ModelCommandError(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class ModelCommand:
+    argument: str | None
+
+
 class ModelCatalogue:
     def __init__(self, ttl_seconds: float = CATALOGUE_TTL_SECONDS):
         self._ttl_seconds = ttl_seconds
+        self._lock = threading.Lock()
         self._models: list[ModelRef] = []
         self._fetched_at = 0.0
 
     def models(self, client: OpenCodeClient) -> list[ModelRef]:
-        if not self._models or time.time() - self._fetched_at > self._ttl_seconds:
-            self._models = client.available_models()
-            self._fetched_at = time.time()
-        return self._models
+        with self._lock:
+            if self._stale():
+                self._models = client.available_models()
+                self._fetched_at = time.time()
+            return self._models
 
     def invalidate(self) -> None:
-        self._models = []
+        with self._lock:
+            self._models = []
+
+    def _stale(self) -> bool:
+        return not self._models or time.time() - self._fetched_at > self._ttl_seconds
 
 
 catalogue = ModelCatalogue()
 
 
-def parse_model_command(text: str) -> str | None | bool:
-    """Return the command argument, None for a bare `model`, or False if not a
-    model command at all."""
+def parse_model_command(text: str) -> ModelCommand | None:
+    """Return the parsed command, or None when the text is not one."""
     match = MODEL_PATTERN.match(text)
     if match is None:
-        return False
-    return match.group("argument")
+        return None
+    return ModelCommand(argument=match.group("argument"))
 
 
 def search(models: list[ModelRef], query: str) -> list[ModelRef]:
@@ -129,6 +141,8 @@ def handle_model_command(
     chosen = resolve(_fetch(client), argument)
     if chosen == in_use:
         return f"Already using `{chosen}`.", current, False
+    if chosen == default:
+        return f"Back to the default model, `{default}`.", None, True
     reply = (
         f"Switched to `{chosen}`. The thread keeps its history; "
         f"`model reset` goes back to `{default}`."
