@@ -26,6 +26,9 @@ class ModelRef:
             )
         return cls(provider_id=provider_id, model_id=model_id)
 
+    def __str__(self) -> str:
+        return f"{self.provider_id}/{self.model_id}"
+
 
 @dataclass(frozen=True)
 class PermissionRule:
@@ -76,9 +79,11 @@ class OpenCodeClient:
         )
         return response.json()["id"]
 
-    def prompt(self, session_id: str, text: str, system: str) -> str:
+    def prompt(
+        self, session_id: str, text: str, system: str, model: ModelRef | None = None
+    ) -> str:
         message = self.prompt_message(
-            session_id, text=text, system=system, tools={"*": False}
+            session_id, text=text, system=system, tools={"*": False}, model=model
         )
         return extract_text(message)
 
@@ -90,11 +95,13 @@ class OpenCodeClient:
         tools: dict[str, bool] | None = None,
         directory: str | None = None,
         timeout: float | None = None,
+        model: ModelRef | None = None,
     ) -> dict:
+        chosen = model or self._model
         body: dict = {
             "model": {
-                "providerID": self._model.provider_id,
-                "modelID": self._model.model_id,
+                "providerID": chosen.provider_id,
+                "modelID": chosen.model_id,
             },
             "system": system,
             "parts": [{"type": "text", "text": text}],
@@ -128,6 +135,17 @@ class OpenCodeClient:
             json={},
             params=_directory_params(directory),
         )
+
+    def available_models(self) -> list[ModelRef]:
+        """Every model the OpenCode server has a configured provider for."""
+        response = self._http.get("/config/providers")
+        response.raise_for_status()
+        payload = response.json()
+        return [
+            ModelRef(provider_id=provider["id"], model_id=model_id)
+            for provider in payload.get("providers", [])
+            for model_id in sorted(provider.get("models", {}))
+        ]
 
     def iter_events(self) -> Iterator[dict]:
         """Yield events for every project directory the server knows about.

@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass
 
 from agent.deps import CaseyDeps
-from agent.opencode_client import OpenCodeClient
+from agent.opencode_client import ModelRef, OpenCodeClient
 
 CASEY_SYSTEM_PROMPT = """\
 You are Casey, an IT helpdesk agent for a company. You help employees troubleshoot \
@@ -64,9 +64,13 @@ logger = logging.getLogger(__name__)
 class CaseyResult:
     final_output: str
     session_id: str
+    model: ModelRef | None = None
 
     def to_input_list(self) -> list:
-        return [{"session_id": self.session_id}]
+        state = {"session_id": self.session_id}
+        if self.model:
+            state["model"] = str(self.model)
+        return [state]
 
 
 _client: OpenCodeClient | None = None
@@ -85,7 +89,12 @@ def get_client() -> OpenCodeClient:
     return _client
 
 
-def run_casey(text: str, deps: CaseyDeps, history: list | None) -> CaseyResult:
+def run_casey(
+    text: str,
+    deps: CaseyDeps,
+    history: list | None,
+    model: ModelRef | None = None,
+) -> CaseyResult:
     client = get_client()
     session_id = _session_id_from(history)
     if session_id is None:
@@ -94,8 +103,10 @@ def run_casey(text: str, deps: CaseyDeps, history: list | None) -> CaseyResult:
         )
         logger.info("Created OpenCode session %s", session_id)
 
-    reply = client.prompt(session_id, text=text, system=CASEY_SYSTEM_PROMPT)
-    return CaseyResult(final_output=reply, session_id=session_id)
+    reply = client.prompt(
+        session_id, text=text, system=CASEY_SYSTEM_PROMPT, model=model
+    )
+    return CaseyResult(final_output=reply, session_id=session_id, model=model)
 
 
 def _session_id_from(history: list | None) -> str | None:

@@ -169,7 +169,7 @@ class TestRunCasey:
 
         self.fake_opencode.create_session.assert_called_once_with(title="Casey C1 1.0")
         self.fake_opencode.prompt.assert_called_once_with(
-            "ses_new", text="Wifi is slow", system=CASEY_SYSTEM_PROMPT
+            "ses_new", text="Wifi is slow", system=CASEY_SYSTEM_PROMPT, model=None
         )
         assert result.final_output == "Try turning it off and on."
         assert result.to_input_list() == [{"session_id": "ses_new"}]
@@ -181,7 +181,10 @@ class TestRunCasey:
 
         self.fake_opencode.create_session.assert_not_called()
         self.fake_opencode.prompt.assert_called_once_with(
-            "ses_existing", text="Still slow", system=CASEY_SYSTEM_PROMPT
+            "ses_existing",
+            text="Still slow",
+            system=CASEY_SYSTEM_PROMPT,
+            model=None,
         )
         assert result.session_id == "ses_existing"
 

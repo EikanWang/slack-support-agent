@@ -9,6 +9,7 @@ import httpx
 from agent.approvals import approval_router
 from agent.deps import CaseyDeps
 from agent.opencode_client import (
+    ModelRef,
     OpenCodeClient,
     OpenCodeUnavailable,
     raise_for_message_error,
@@ -60,15 +61,17 @@ class OperatorResult:
     final_output: str
     session_id: str | None
     directory: str
+    model: ModelRef | None = None
 
     def to_input_list(self) -> list:
-        return [
-            {
-                "mode": "operator",
-                "session_id": self.session_id,
-                "directory": self.directory,
-            }
-        ]
+        state = {
+            "mode": "operator",
+            "session_id": self.session_id,
+            "directory": self.directory,
+        }
+        if self.model:
+            state["model"] = str(self.model)
+        return [state]
 
 
 _policy: OperatorPolicy | None = None
@@ -85,7 +88,12 @@ def is_operator(user_id: str | None) -> bool:
     return get_policy().is_operator(user_id)
 
 
-def run_operator(text: str, deps: CaseyDeps, history: list | None) -> OperatorResult:
+def run_operator(
+    text: str,
+    deps: CaseyDeps,
+    history: list | None,
+    model: ModelRef | None = None,
+) -> OperatorResult:
     policy = get_policy()
     state = _state_from(history)
     directory = Path(state.get("directory") or policy.start_directory)
@@ -93,9 +101,9 @@ def run_operator(text: str, deps: CaseyDeps, history: list | None) -> OperatorRe
 
     match = CD_PATTERN.match(text)
     if match:
-        return _change_directory(policy, match.group("path"), directory)
+        return _change_directory(policy, match.group("path"), directory, model)
     if PWD_PATTERN.match(text):
-        return OperatorResult(f"`{directory}`", session_id, str(directory))
+        return OperatorResult(f"`{directory}`", session_id, str(directory), model)
 
     client = get_client()
     approval_router.start(client)
@@ -127,6 +135,7 @@ def run_operator(text: str, deps: CaseyDeps, history: list | None) -> OperatorRe
             ),
             directory=str(directory),
             timeout=_turn_timeout(),
+            model=model,
         )
     except Exception:
         _abort_quietly(client, session_id, str(directory))
@@ -135,24 +144,28 @@ def run_operator(text: str, deps: CaseyDeps, history: list | None) -> OperatorRe
         approval_router.unregister(session_id)
 
     raise_for_message_error(message)
-    return OperatorResult(_render(message), session_id, str(directory))
+    return OperatorResult(_render(message), session_id, str(directory), model)
 
 
 def _change_directory(
-    policy: OperatorPolicy, requested: str | None, current: Path
+    policy: OperatorPolicy,
+    requested: str | None,
+    current: Path,
+    model: ModelRef | None = None,
 ) -> OperatorResult:
     target = requested or str(policy.start_directory)
     try:
         resolved = policy.resolve_directory(target, current)
     except OperatorPolicyError as error:
         return OperatorResult(
-            f":no_entry: {error}\nStill in `{current}`.", None, str(current)
+            f":no_entry: {error}\nStill in `{current}`.", None, str(current), model
         )
     return OperatorResult(
         f"Working directory is now `{resolved}`. New OpenCode session will start "
         f"with your next message.",
         None,
         str(resolved),
+        model,
     )
 
 

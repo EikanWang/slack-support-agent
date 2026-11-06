@@ -105,6 +105,23 @@ Everything deployment-specific lives in one gitignored file, `.env`. Nothing in 
 
 Casey itself never sees a model API key: the OpenCode server owns the provider and its credentials.
 
+### Switching models from Slack
+
+`OPENCODE_MODEL` is the default, but any thread can switch to another model the OpenCode server has a provider for. Send these in the thread (or DM) instead of a question:
+
+| Command | Effect |
+|---|---|
+| `model` | Show the model this thread is using |
+| `model list` | List every available model |
+| `model list haiku 5` | List models matching all of those words |
+| `model openai/gpt-5` | Switch to an exact `provider/model` |
+| `model haiku` | Switch by substring, as long as it matches exactly one model |
+| `model reset` | Go back to `OPENCODE_MODEL` |
+
+The switch applies to the **current thread only** and lasts as long as the thread's conversation history (24h by default). New threads start on the default again. The OpenCode session is not recreated, so **the thread keeps its full history across a switch** — useful for escalating a stuck conversation to a stronger model mid-thread.
+
+An ambiguous query is rejected with the list of candidates rather than guessing. The catalogue is cached for 5 minutes.
+
 To migrate to another machine, copy `.env`, the credentials file it points to, and `.slack/apps.dev.json` (your local Slack app link, also gitignored), then run `scripts/dev.sh up`.
 
 ### Rotating credentials
@@ -211,7 +228,7 @@ This mode uses an HTTP server instead of Socket Mode, which is required for OAut
 
 **App Home** — Open Casey in Slack and click the _Home_ tab. Click a category, describe your issue in the modal, and submit. Casey starts a DM thread with you.
 
-**Direct Messages** — Open a DM with Casey. Pick a suggested prompt (_Reset Password_, _Request Access_, _Network Issues_) or describe your own issue. Follow up in the same thread and Casey keeps the context.
+**Direct Messages** — Open a DM with Casey. Pick a suggested prompt (_Reset Password_, _Request Access_, _Network Issues_) or describe your own issue. Follow up in the same thread and Casey keeps the context. Send `model` to see or change which model answers in that thread.
 
 **Channel @mentions** — `/invite @Casey` to a channel, then `@Casey <your issue>`. Casey answers in a thread.
 
@@ -240,7 +257,8 @@ CI runs the same three commands on every PR.
 | `agent/opencode_client.py` | Small HTTP client for the OpenCode server: sessions, prompts, permission replies, event stream |
 | `agent/support_agent.py` | Helpdesk persona: system prompt, one OpenCode session per thread, tools disabled |
 | `agent/operator.py`, `agent/operator_policy.py`, `agent/approvals.py` | Operator mode: allowlist and directory sandbox, OpenCode permission ruleset, `cd`/`pwd`, Slack approval cards wired to OpenCode permission events |
-| `agent/router.py`, `agent/deps.py` | Pick helpdesk vs operator per Slack user; carry the Slack client and thread context into the agent |
+| `agent/models.py` | The `model` command: catalogue lookup, fuzzy resolution, and the Slack replies |
+| `agent/router.py`, `agent/deps.py` | Intercept the `model` command, pick helpdesk vs operator per Slack user, carry the Slack client and thread context into the agent |
 | `listeners/events/` | `app_home_opened.py` (Home tab + suggested prompts), `app_mentioned.py`, `message.py` |
 | `listeners/actions/` | `issue_buttons.py` (category buttons), `feedback_buttons.py`, `approval_buttons.py` |
 | `listeners/views/` | `issue_modal.py` (submission handler), `app_home_builder.py`, `issue_modal_builder.py`, `feedback_builder.py` (Block Kit builders) |

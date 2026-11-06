@@ -1,9 +1,57 @@
 from agent.deps import CaseyDeps
+from agent.models import (
+    ModelCommandError,
+    handle_model_command,
+    parse_model_command,
+)
+from agent.opencode_client import ModelRef
 from agent.operator import is_operator, run_operator
-from agent.support_agent import run_casey
+from agent.support_agent import get_client, run_casey
+
+
+class ModelCommandResult:
+    def __init__(self, final_output: str, state: dict):
+        self.final_output = final_output
+        self._state = state
+
+    def to_input_list(self) -> list:
+        return [self._state]
 
 
 def run_agent(text: str, deps: CaseyDeps, history: list | None):
-    if is_operator(deps.user_id):
-        return run_operator(text, deps, history)
-    return run_casey(text, deps, history)
+    state = history[0] if history else {}
+    model = model_from(state)
+
+    argument = parse_model_command(text)
+    if argument is not False:
+        return _run_model_command(argument, state, model)
+
+    result = (
+        run_operator(text, deps, history, model=model)
+        if is_operator(deps.user_id)
+        else run_casey(text, deps, history, model=model)
+    )
+    return result
+
+
+def model_from(state: dict) -> ModelRef | None:
+    value = state.get("model")
+    return ModelRef.parse(value) if value else None
+
+
+def _run_model_command(
+    argument: str | None, state: dict, model: ModelRef | None
+) -> ModelCommandResult:
+    try:
+        reply, chosen, changed = handle_model_command(argument, get_client(), model)
+    except ModelCommandError as error:
+        return ModelCommandResult(f":no_entry: {error}", state)
+
+    if not changed:
+        return ModelCommandResult(reply, state)
+    next_state = {**state}
+    if chosen is None:
+        next_state.pop("model", None)
+    else:
+        next_state["model"] = str(chosen)
+    return ModelCommandResult(reply, next_state)

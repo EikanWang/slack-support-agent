@@ -263,9 +263,9 @@ class TestRouter:
         monkeypatch.setattr(
             router,
             "run_operator",
-            lambda *a: calls.append("operator") or OperatorResult("", None, ""),
+            lambda *a, **k: calls.append("operator") or OperatorResult("", None, ""),
         )
-        monkeypatch.setattr(router, "run_casey", lambda *a: calls.append("casey"))
+        monkeypatch.setattr(router, "run_casey", lambda *a, **k: calls.append("casey"))
         deps = Mock(CaseyDeps)
 
         deps.user_id = "UOWNER"
