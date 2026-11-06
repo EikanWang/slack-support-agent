@@ -16,6 +16,8 @@ from agent.opencode_client import (
     ModelRef,
     OpenCodeClient,
     OpenCodeCredentialError,
+    OpenCodeModelError,
+    OpenCodeRequestError,
     OpenCodeUnavailable,
     extract_text,
 )
@@ -108,6 +110,110 @@ class TestConnectRetry:
 
         with pytest.raises(OpenCodeUnavailable, match="not reachable"):
             client.create_session("t")
+
+
+class TestHttpErrors:
+    def _client(self, handler):
+        client = OpenCodeClient(
+            base_url="http://opencode.test", model=ModelRef("prov", "m")
+        )
+        client._http = httpx.Client(
+            base_url="http://opencode.test", transport=httpx.MockTransport(handler)
+        )
+        return client
+
+    def test_surfaces_the_server_error_body(self):
+        def handler(request):
+            return httpx.Response(
+                404, json={"name": "NotFoundError", "data": {"message": "Session gone"}}
+            )
+
+        client = self._client(handler)
+
+        with pytest.raises(
+            OpenCodeRequestError, match="NotFoundError Session gone"
+        ) as caught:
+            client.create_session("t")
+        assert caught.value.status_code == 404
+
+    def test_includes_the_error_ref_for_opaque_failures(self):
+        def handler(request):
+            return httpx.Response(
+                500,
+                json={
+                    "name": "UnknownError",
+                    "data": {
+                        "message": "Unexpected server error.",
+                        "ref": "err_abc123",
+                    },
+                },
+            )
+
+        client = self._client(handler)
+
+        with pytest.raises(OpenCodeRequestError, match="ref err_abc123"):
+            client.create_session("t")
+
+    def test_falls_back_to_raw_body_when_not_json(self):
+        client = self._client(lambda request: httpx.Response(502, text="bad gateway"))
+
+        with pytest.raises(OpenCodeRequestError, match="bad gateway"):
+            client.create_session("t")
+
+    def test_explains_an_unconfigured_model_behind_a_500(self):
+        def handler(request):
+            if request.url.path == "/config/providers":
+                return httpx.Response(
+                    200,
+                    json={
+                        "providers": [
+                            {"id": "other", "models": {"m": {}, "spare": {}}},
+                        ]
+                    },
+                )
+            return httpx.Response(500, json={"data": {"ref": "err_1"}})
+
+        client = self._client(handler)
+        client.create_session = lambda *a, **k: "ses_1"
+
+        with pytest.raises(OpenCodeModelError) as caught:
+            client.prompt_message("ses_1", text="hi", system="s")
+        message = str(caught.value)
+        assert "no model `prov/m` configured" in message
+        assert "Did you mean `other/m`?" in message
+
+    def test_keeps_the_http_error_when_the_model_is_fine(self):
+        def handler(request):
+            if request.url.path == "/config/providers":
+                return httpx.Response(
+                    200, json={"providers": [{"id": "prov", "models": {"m": {}}}]}
+                )
+            return httpx.Response(500, json={"data": {"ref": "err_2"}})
+
+        client = self._client(handler)
+
+        with pytest.raises(OpenCodeRequestError, match="ref err_2"):
+            client.prompt_message("ses_1", text="hi", system="s")
+
+    def test_lists_available_models(self):
+        def handler(request):
+            return httpx.Response(
+                200,
+                json={
+                    "providers": [
+                        {"id": "b", "models": {"two": {}, "one": {}}},
+                        {"id": "a", "models": {"solo": {}}},
+                    ]
+                },
+            )
+
+        client = self._client(handler)
+
+        assert client.available_models() == [
+            ModelRef("b", "one"),
+            ModelRef("b", "two"),
+            ModelRef("a", "solo"),
+        ]
 
 
 class TestOpenCodeClient:

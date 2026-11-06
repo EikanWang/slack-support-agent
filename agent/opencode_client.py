@@ -108,12 +108,17 @@ class OpenCodeClient:
         }
         if tools is not None:
             body["tools"] = tools
-        response = self._post(
-            f"/session/{session_id}/message",
-            json=body,
-            params=_directory_params(directory),
-            timeout=timeout,
-        )
+        try:
+            response = self._post(
+                f"/session/{session_id}/message",
+                json=body,
+                params=_directory_params(directory),
+                timeout=timeout,
+            )
+        except OpenCodeRequestError as error:
+            if error.status_code >= 500:
+                self._check_model_available(chosen)
+            raise
         return response.json()
 
     def reply_permission(
@@ -189,6 +194,8 @@ class OpenCodeClient:
                 )
                 response.raise_for_status()
                 return response
+            except httpx.HTTPStatusError as error:
+                raise OpenCodeRequestError.from_response(error.response) from error
             except httpx.ConnectError as error:
                 last_error = error
                 time.sleep(CONNECT_RETRY_DELAY_SECONDS * (attempt + 1))
@@ -196,6 +203,34 @@ class OpenCodeClient:
             f"OpenCode server at {self._base_url} is not reachable "
             f"(is `scripts/dev.sh up` running?)"
         ) from last_error
+
+    def _check_model_available(self, model: ModelRef) -> None:
+        """Raise a pointed error when the server has no such model configured.
+
+        OpenCode answers an unknown model with a bare 500 whose body says only
+        "check server logs", so the catalogue is the only way to tell the user
+        what is actually wrong.
+        """
+        try:
+            available = self.available_models()
+        except (httpx.HTTPError, OSError):
+            return
+        if model in available:
+            return
+        suggestions = [
+            str(candidate)
+            for candidate in available
+            if candidate.model_id == model.model_id
+        ][:3]
+        hint = (
+            f" Did you mean {', '.join(f'`{s}`' for s in suggestions)}?"
+            if suggestions
+            else ""
+        )
+        raise OpenCodeModelError(
+            f"OpenCode has no model `{model}` configured "
+            f"({len(available)} are available).{hint}"
+        )
 
 
 def _directory_params(directory: str | None) -> dict | None:
@@ -214,6 +249,42 @@ def _require_env(name: str) -> str:
 
 class OpenCodeUnavailable(RuntimeError):
     pass
+
+
+class OpenCodeModelError(RuntimeError):
+    pass
+
+
+class OpenCodeRequestError(RuntimeError):
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+    @classmethod
+    def from_response(cls, response: httpx.Response) -> "OpenCodeRequestError":
+        detail = _error_detail(response)
+        return cls(
+            response.status_code,
+            f"OpenCode returned HTTP {response.status_code} for "
+            f"{response.request.url.path}: {detail}",
+        )
+
+
+def _error_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text[:300].strip() or "no response body"
+    if not isinstance(payload, dict):
+        return str(payload)[:300]
+    data = payload.get("data")
+    parts = [str(payload.get("name") or "")]
+    if isinstance(data, dict):
+        parts.append(str(data.get("message") or ""))
+        if data.get("ref"):
+            parts.append(f"(ref {data['ref']}; see `opencode` server logs)")
+    return " ".join(part for part in parts if part) or response.text[:300]
 
 
 class OpenCodeCredentialError(RuntimeError):
