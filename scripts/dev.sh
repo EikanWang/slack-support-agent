@@ -53,6 +53,33 @@ alive() {
   [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null
 }
 
+# App processes for THIS project, whoever started them. `slack run` spawns the
+# Bolt app as a child; if that parent dies without reaping it the child keeps
+# consuming Slack events with its original .env, so a second Casey answers
+# alongside the current one. The pid files cannot see those, so match on cwd.
+app_pids() {
+  local pid argv0
+  for pid in $(pgrep -f 'slack_cli_hooks\.hooks\.start' 2>/dev/null || true); do
+    [[ "$(readlink -f "/proc/$pid/cwd" 2>/dev/null)" == "$PROJECT_DIR" ]] || continue
+    argv0=$(tr '\0' '\n' <"/proc/$pid/cmdline" 2>/dev/null | head -1)
+    [[ "$argv0" == *python* ]] || continue
+    echo "$pid"
+  done
+}
+
+stop_stray_apps() {
+  local pids pid
+  pids=$(app_pids)
+  [[ -z "$pids" ]] && return 0
+  log "stopping stray app process(es): $(echo "$pids" | tr '\n' ' ')"
+  for pid in $pids; do kill "$pid" 2>/dev/null || true; done
+  for ((i = 0; i < 20; i++)); do
+    [[ -z "$(app_pids)" ]] && return 0
+    sleep 0.5
+  done
+  for pid in $(app_pids); do kill -9 "$pid" 2>/dev/null || true; done
+}
+
 healthy() {
   curl -fsS -o /dev/null "http://127.0.0.1:$OPENCODE_PORT/global/health" 2>/dev/null
 }
@@ -138,6 +165,7 @@ cmd_up() {
   if alive "$SLACK_PID"; then
     log "slack run already running (pid $(cat "$SLACK_PID"))"
   else
+    stop_stray_apps
     (
       cd "$PROJECT_DIR"
       # shellcheck disable=SC2086
@@ -168,6 +196,7 @@ stop_pidfile() {
 
 cmd_down() {
   stop_pidfile "$SLACK_PID" "slack run"
+  stop_stray_apps
   stop_pidfile "$LOOP_PID" "opencode loop"
 }
 
@@ -203,7 +232,18 @@ cmd_status() {
   else
     echo "slack run     : stopped"
   fi
-  echo "credentials   : $CREDS_FILE (modified $(stat -c '%y' "$CREDS_FILE" 2>/dev/null | cut -d. -f1 || echo missing))"
+  local apps count
+  apps=$(app_pids | tr '\n' ' ')
+  apps=${apps% }
+  count=$(printf '%s' "$apps" | wc -w)
+  if [[ "$count" -eq 0 ]]; then
+    echo "app           : stopped"
+  elif [[ "$count" -eq 1 ]]; then
+    echo "app           : running (pid $apps)"
+  else
+    echo "app           : $count copies running (pids $apps)"
+    echo "                stray copies also answer Slack; run: $0 down && $0 up"
+  fi
 }
 
 cmd_logs() {

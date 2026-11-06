@@ -175,6 +175,8 @@ scripts/dev.sh restart  # force opencode serve to re-read credentials
 scripts/dev.sh down
 ```
 
+`status` reports the OpenCode server, `slack run`, and the Bolt app separately. If it ever shows more than one app copy, a previous run was orphaned and both copies are answering Slack with their own `.env`; `down` then `up` clears it.
+
 Logs and pid files live in `.run/` (gitignored).
 </details>
 
@@ -274,6 +276,10 @@ CI runs the same three commands on every PR.
 **`opencode serve did not become healthy`** — run `scripts/dev.sh logs` and check `.run/opencode-serve.log`. Usually a wrong `OPENCODE_MODEL` or missing provider variable.
 
 **Casey does not answer DMs** — make sure `slack run` is up (`scripts/dev.sh status`) and that the app's _Messages_ tab is enabled (it is, in `manifest.json`).
+
+**Casey answers twice, or uses a model you already changed** — `scripts/dev.sh status` will show two app copies. An earlier `slack run` died without reaping its Bolt child, so an old process is still handling events with the `.env` it started with. `scripts/dev.sh down` reaps strays; `up` sweeps before starting.
+
+**`OpenCode has no model ... configured`** — `OPENCODE_MODEL` names a provider or model the server does not have, usually after editing `opencode.json`. The message lists the same model id under the providers that do offer it; `model list` shows everything.
 
 **MCP Server connection error `HTTP error 400 (Bad Request)`** — the Slack MCP feature is not enabled for your app. Run `slack app settings`, open **Agents & AI Apps**, and toggle **Slack Model Context Protocol** on.
 
